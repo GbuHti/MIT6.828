@@ -28,6 +28,7 @@ countfree()
     }
     n += PGSIZE;
   }
+//  printf("sz0: %d, n: %d, last addr: %d\n", sz0, n, sbrk(0));
   sinfo(&info);
   if (info.freemem != 0) {
     printf("FAIL: there is no free mem, but sysinfo.freemem=%d\n",
