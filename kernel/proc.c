@@ -39,6 +39,7 @@ procinit(void)
         panic("kalloc");
       uint64 va = KSTACK((int) (p - proc));
       kvmmap(va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
+//	  printf("procinit pa: %p\n", (uint64)pa);
       p->kstack = va;
   }
   kvminithart();
@@ -89,6 +90,7 @@ allocpid() {
 // If found, initialize state required to run in the kernel,
 // and return with p->lock held.
 // If there are no free procs, or a memory allocation fails, return 0.
+extern pagetable_t kernel_pagetable;
 static struct proc*
 allocproc(void)
 {
@@ -121,6 +123,28 @@ found:
     return 0;
   }
 
+  p->kpagetable = myvminit();
+
+  // Allocate a page for the process's kernel stack.
+  // Map it high in memory, followed by an invalid
+  // guard page.
+
+  pte_t * pte = walk(kernel_pagetable, p->kstack, 0);
+  uint64 pa = PTE2PA(*pte);
+
+// printf("allocproc pa: %p\n", (uint64)pa);
+  // char *pa = kalloc();
+  if(pa == 0)
+	  panic("my allocproc");
+  uint64 va = KSTACK((int) (p - proc));
+  mappages(p->kpagetable, va, PGSIZE, (uint64)pa, PTE_R | PTE_W);
+  p->kstack = va;
+
+
+  // add mappings for user addresses to process's kernel page table
+  addUserMapping2kpt(p);
+
+
   // Set up new context to start executing at forkret,
   // which returns to user space.
   memset(&p->context, 0, sizeof(p->context));
@@ -128,6 +152,27 @@ found:
   p->context.sp = p->kstack + PGSIZE;
 
   return p;
+}
+
+// user addresses 位于低地址，kernel addresses 位于高地址
+// 在kernel page table中建立user address空间中va和pa的映射关系
+void addUserMapping2kpt(struct proc *p)
+{
+	if (p->sz > 0xc000000)
+		panic("process's size too large");
+	for (uint64 va = 0; va < p->sz; va+=PGSIZE){
+
+		pte_t *pte = walk(p->pagetable, va, 0);
+		if ( pte == 0)
+			panic("addUserMapping2kpt");
+		uint64 pa = PTE2PA(*pte);
+
+		pte_t * kpte = walk(p->kpagetable, va, 0);
+		if (kpte != 0)
+			*kpte = 0;
+
+		mappages(p->kpagetable, va, PGSIZE, pa, PTE_R|PTE_W);	
+	}
 }
 
 // free a proc structure and the data hanging from it,
@@ -141,6 +186,13 @@ freeproc(struct proc *p)
   p->trapframe = 0;
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
+//  if (p->kstack){
+//	pte_t * pte = walk(p->kpagetable, p->kstack, 0);
+//	uint64 pa = PTE2PA(*pte);	
+//	kfree((void *)pa);
+//  }
+  if(p->kpagetable)
+	  myfreewalk(p->kpagetable);
   p->pagetable = 0;
   p->sz = 0;
   p->pid = 0;
@@ -221,6 +273,9 @@ userinit(void)
   uvminit(p->pagetable, initcode, sizeof(initcode));
   p->sz = PGSIZE;
 
+  //
+  addUserMapping2kpt(p);
+
   // prepare for the very first "return" from kernel to user.
   p->trapframe->epc = 0;      // user program counter
   p->trapframe->sp = PGSIZE;  // user stack pointer
@@ -274,6 +329,9 @@ fork(void)
     return -1;
   }
   np->sz = p->sz;
+
+  // 
+  addUserMapping2kpt(np);
 
   np->parent = p;
 
@@ -472,12 +530,18 @@ scheduler(void)
         // to release its lock and then reacquire it
         // before jumping back to us.
         p->state = RUNNING;
-        c->proc = p;
-        swtch(&c->context, &p->context);
+		c->proc = p;
+
+		w_satp(MAKE_SATP(p->kpagetable));
+		sfence_vma();
+
+		swtch(&c->context, &p->context);
 
         // Process is done running for now.
         // It should have changed its p->state before coming back.
         c->proc = 0;
+		
+		kvminithart();
 
         found = 1;
       }
