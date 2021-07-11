@@ -1,0 +1,8 @@
+1, a0~a7
+
+2, in f(x), it add 3 to x directly, not calls g(x); 
+   in main(), I'm not sure wether the complier just place a computed result -- 12 in a1
+
+3, by using the instruction -- jalr, jump to printf()
+
+4, $ra = $pc + 4
