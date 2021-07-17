@@ -32,6 +32,7 @@ sparse_memory(char *s)
     }
   }
 
+//	printf("prev_end %p new_end %p!!!!!!!!!!!!!!!!\n", prev_end, new_end);
   exit(0);
 }
 

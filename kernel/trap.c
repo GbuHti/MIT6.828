@@ -66,11 +66,32 @@ usertrap(void)
 
     syscall();
   } else if((which_dev = devintr()) != 0){
-    // ok
-  } else {
-    printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
-    printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
-    p->killed = 1;
+	  // ok
+  }else if (r_scause() == 13 || r_scause() == 15){
+	  uint64 va = r_stval();
+	  uint64 sp = p->trapframe->sp;
+	  sp = PGROUNDDOWN(sp);
+	  if (va > myproc()->sz || ((va < sp) && (va >= sp-PGSIZE))){
+		  p->killed = 1;
+		  exit(-1);
+	  }else{
+		  //printf("page fault %p\n", va);
+		  va = PGROUNDDOWN(va);	
+		  char * mem = kalloc();
+		  if (mem == 0){
+			  p->killed = 1; 
+		  }else{
+			  memset(mem, 0, PGSIZE);
+			  if(mappages(myproc()->pagetable, va, PGSIZE, (uint64)mem, PTE_W|PTE_R|PTE_U) != 0){
+				  kfree((void *)mem);
+				  p->killed = 1;	
+			  }
+		  }  
+	  }
+  }else {
+	  printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
+	  printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
+	  p->killed = 1;
   }
 
   if(p->killed)
@@ -147,6 +168,27 @@ kerneltrap()
     printf("scause %p\n", scause);
     printf("sepc=%p stval=%p\n", r_sepc(), r_stval());
     panic("kerneltrap");
+  }
+
+  if (scause == 13 || scause == 15){
+	  printf("I'm here!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n");
+	  uint64 va = r_stval();
+	  if (va > myproc()->sz){
+		  exit(-1);
+	  }else{
+		  //printf("page fault %p\n", va);
+		  va = PGROUNDDOWN(va);	
+		  char * mem = kalloc();
+		  if (mem == 0){
+			exit(-1);
+		  }else{
+			  memset(mem, 0, PGSIZE);
+			  if(mappages(myproc()->pagetable, va, PGSIZE, (uint64)mem, PTE_W|PTE_R|PTE_U) != 0){
+				  kfree((void *)mem);
+				  exit(-1);
+			  }
+		  }  
+	  }
   }
 
   // give up the CPU if this is a timer interrupt.
