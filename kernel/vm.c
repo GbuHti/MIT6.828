@@ -5,6 +5,7 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
+#include "spinlock.h"
 
 /*
  * the kernel's page table.
@@ -15,6 +16,10 @@ extern char etext[];  // kernel.ld sets this to end of kernel code.
 
 extern char trampoline[]; // trampoline.S
 
+extern struct rc{
+	struct spinlock lock;
+	int rc[(PHYSTOP-KERNBASE)/PGSIZE];
+} pageRefCount;
 /*
  * create a direct-map page table for the kernel.
  */
@@ -182,8 +187,10 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
   for(a = va; a < va + npages*PGSIZE; a += PGSIZE){
     if((pte = walk(pagetable, a, 0)) == 0)
       panic("uvmunmap: walk");
-    if((*pte & PTE_V) == 0)
+    if((*pte & PTE_V) == 0){
+		printf("va: %p\n", PTE2PA(*pte));
       panic("uvmunmap: not mapped");
+	  }
     if(PTE_FLAGS(*pte) == PTE_V)
       panic("uvmunmap: not a leaf");
     if(do_free){
@@ -311,22 +318,27 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   pte_t *pte;
   uint64 pa, i;
   uint flags;
-  char *mem;
+//  char *mem;
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
       panic("uvmcopy: pte should exist");
     if((*pte & PTE_V) == 0)
       panic("uvmcopy: page not present");
+	*pte &= ~PTE_W;
+	*pte |= PTE_RSW;
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
-      goto err;
-    memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
-      kfree(mem);
+//    if((mem = kalloc()) == 0)
+//      goto err;
+//    memmove(mem, (char*)pa, PGSIZE);
+    if(mappages(new, i, PGSIZE, pa, flags) != 0){
+      kfree((void *)pa);
       goto err;
     }
+	acquire(&pageRefCount.lock);
+	pageRefCount.rc[(pa-KERNBASE)/PGSIZE]++;
+	release(&pageRefCount.lock);
   }
   return 0;
 
@@ -358,12 +370,39 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
-    pa0 = walkaddr(pagetable, va0);
-    if(pa0 == 0)
-      return -1;
-    n = PGSIZE - (dstva - va0);
-    if(n > len)
-      n = len;
+	pa0 = walkaddr(pagetable, va0);
+	if(pa0 == 0)
+		return -1;
+	pte_t * pte = walk(pagetable, va0, 0);
+	acquire(&pageRefCount.lock);
+	if (*pte & PTE_RSW){
+		if (pageRefCount.rc[(pa0-KERNBASE)/PGSIZE] == 1){
+			*pte |= PTE_W; 
+			*pte &= ~PTE_RSW;
+		}else { // 一个page有多个reference
+			// 重新分配page
+			char * mem;
+			if((mem = kalloc()) == 0){
+				//printf("copyin: out of memery**********\n"); 
+				release(&pageRefCount.lock);
+				exit(-1);
+			}
+			uint flags = PTE_FLAGS(*pte);
+			flags |= PTE_W; 
+			flags &= ~PTE_RSW;
+			*pte &= ~PTE_V;
+			// 复制当前指向的page到新的page
+			memmove(mem, (char*)pa0, PGSIZE);
+			// 更改page table原有的映射 
+			mappages(pagetable, va0, PGSIZE, (uint64)mem, flags);
+			pageRefCount.rc[(pa0-KERNBASE)/PGSIZE]--;	
+			pa0 = (uint64)mem;
+		}
+	}
+	release(&pageRefCount.lock);
+	n = PGSIZE - (dstva - va0);
+	if(n > len)
+		n = len;
     memmove((void *)(pa0 + (dstva - va0)), src, n);
 
     len -= n;

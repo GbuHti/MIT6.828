@@ -13,6 +13,10 @@ void freerange(void *pa_start, void *pa_end);
 
 extern char end[]; // first address after kernel.
                    // defined by kernel.ld.
+struct rc{
+	struct spinlock lock;
+	int rc[(PHYSTOP-KERNBASE)/PGSIZE];
+} pageRefCount;
 
 struct run {
   struct run *next;
@@ -27,6 +31,8 @@ void
 kinit()
 {
   initlock(&kmem.lock, "kmem");
+  initlock(&pageRefCount.lock, "pageRefCount");
+  memset(pageRefCount.rc, 0, (PHYSTOP-KERNBASE)/PGSIZE*sizeof(int));
   freerange(end, (void*)PHYSTOP);
 }
 
@@ -51,6 +57,16 @@ kfree(void *pa)
   if(((uint64)pa % PGSIZE) != 0 || (char*)pa < end || (uint64)pa >= PHYSTOP)
     panic("kfree");
 
+  // 
+  //printf("pa: %p,\t ref count: %d\n", pa,pageRefCount[((uint64)pa-KERNBASE)/PGSIZE]);
+  acquire(&pageRefCount.lock);
+  pageRefCount.rc[((uint64)pa-KERNBASE)/PGSIZE]--;
+  if ( pageRefCount.rc[((uint64)pa-KERNBASE)/PGSIZE] > 0){
+	  release(&pageRefCount.lock);
+	  return;
+  }else{
+	  release(&pageRefCount.lock);
+  }
   // Fill with junk to catch dangling refs.
   memset(pa, 1, PGSIZE);
 
@@ -78,5 +94,12 @@ kalloc(void)
 
   if(r)
     memset((char*)r, 5, PGSIZE); // fill with junk
+  
+  // 每分配一个page, reference cout 置为 1
+  if(r){
+//	  acquire(&pageRefCount.lock);
+	  pageRefCount.rc[((uint64)r-KERNBASE)/PGSIZE] = 1;
+//	  release(&pageRefCount.lock);
+  }
   return (void*)r;
 }

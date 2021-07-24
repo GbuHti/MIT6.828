@@ -11,6 +11,10 @@ uint ticks;
 
 extern char trampoline[], uservec[], userret[];
 
+extern struct rc{
+	struct spinlock lock;
+	int rc[(PHYSTOP-KERNBASE)/PGSIZE];
+} pageRefCount;
 // in kernelvec.S, calls kerneltrap().
 void kernelvec();
 
@@ -65,6 +69,36 @@ usertrap(void)
     intr_on();
 
     syscall();
+  } else if(r_scause() == 15){
+	  uint64 va = PGROUNDDOWN(r_stval());
+	  pte_t *pte = walk(p->pagetable, va, 0);
+	  // 判断是否为cow 类型的page fault
+	  acquire(&pageRefCount.lock);
+	  if ( *pte & PTE_RSW){
+		  uint64 pa = PTE2PA(*pte);
+		  if (pageRefCount.rc[(pa-KERNBASE)/PGSIZE] == 1){
+			  *pte |= PTE_W; 
+			  *pte &= ~PTE_RSW;
+		  }else { // 一个page有多个reference
+			  // 重新分配page
+			  char * mem;
+			  if((mem = kalloc()) == 0){
+				  //printf("out of memory!!!!!!!!!!\n"); 
+				  release(&pageRefCount.lock);
+				  exit(-1);
+			  }
+			  uint flags = PTE_FLAGS(*pte);
+			  flags |= PTE_W; 
+			  flags &= ~PTE_RSW;
+			  *pte &= ~PTE_V;
+			  // 复制当前指向的page到新的page
+			  memmove(mem, (char*)pa, PGSIZE);
+			  // 更改page table原有的映射 
+			  mappages(p->pagetable, va, PGSIZE, (uint64)mem, flags);
+			  pageRefCount.rc[(pa-KERNBASE)/PGSIZE]--;	
+		  }
+	  }
+	  release(&pageRefCount.lock);
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {
