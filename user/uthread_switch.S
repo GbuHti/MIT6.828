@@ -21,7 +21,7 @@ thread_switch:
 	sd s8, 80(a0)
 	sd s9, 88(a0)
 	sd s10, 96(a0)
-sd s11, 104(a0)
+	sd s11, 104(a0)
 
 	ld ra, 0(a1)
 	ld sp, 8(a1)
@@ -36,7 +36,7 @@ sd s11, 104(a0)
 	ld s8, 80(a1)
 	ld s9, 88(a1)
 	ld s10, 96(a1)
-ld s11, 104(a1)
+	ld s11, 104(a1)
 
 
 	ret    /* return to ra */

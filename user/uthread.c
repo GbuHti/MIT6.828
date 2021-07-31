@@ -33,7 +33,6 @@ struct thread {
   char       stack[STACK_SIZE]; /* the thread's stack */
   int        state;             /* FREE, RUNNING, RUNNABLE */
   struct context context;
-
 };
 struct thread all_thread[MAX_THREAD];
 struct thread *current_thread;
@@ -62,6 +61,7 @@ thread_schedule(void)
   for(int i = 0; i < MAX_THREAD; i++){
     if(t >= all_thread + MAX_THREAD)
       t = all_thread;
+//	printf("t: %p\tSTATE: %d\n", t, t->state);
     if(t->state == RUNNABLE) {
       next_thread = t;
       break;
@@ -76,7 +76,7 @@ thread_schedule(void)
 
   if (current_thread != next_thread) {         /* switch threads?  */
     next_thread->state = RUNNING;
-	printf("xxxx\n");
+//	printf("xxxx\n");
     t = current_thread;
     current_thread = next_thread;
     /* YOUR CODE HERE
@@ -94,12 +94,15 @@ thread_create(void (*func)())
   struct thread *t;
 
   for (t = all_thread; t < all_thread + MAX_THREAD; t++) {
-    if (t->state == FREE) break;
+    if (t->state == FREE) {
+		//printf("thread_create t: %p\n", t);
+		break;
+	}
   }
   t->state = RUNNABLE;
   // YOUR CODE HERE
   t->context.ra = (uint64)func;
-  t->context.sp = (uint64)t->stack;
+  t->context.sp = (uint64)((char*)t->stack + STACK_SIZE);
 }
 
 void 
