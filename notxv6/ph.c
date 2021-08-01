@@ -8,6 +8,9 @@
 #define NBUCKET 5
 #define NKEYS 100000
 
+pthread_mutex_t lock; 
+
+
 struct entry {
   int key;
   int value;
@@ -51,7 +54,9 @@ void put(int key, int value)
     e->value = value;
   } else {
     // the new is new.
+	pthread_mutex_lock(&lock);
     insert(key, value, &table[i], table[i]);
+	pthread_mutex_unlock(&lock);
   }
 }
 
@@ -118,6 +123,7 @@ main(int argc, char *argv[])
   //
   // first the puts
   //
+  pthread_mutex_init(&lock, NULL); 
   t0 = now();
   for(int i = 0; i < nthread; i++) {
     assert(pthread_create(&tha[i], NULL, put_thread, (void *) (long) i) == 0);
