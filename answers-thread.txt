@@ -1,0 +1,1 @@
+sequence: one thread put the list behind of new node , and then it set new node as head of list. This process should be atomic. 
