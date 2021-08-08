@@ -9,6 +9,9 @@
 #include "riscv.h"
 #include "defs.h"
 
+#define LOCKNAMELEN 32
+int interval = 0;
+
 void freerange(void *pa_start, void *pa_end);
 
 extern char end[]; // first address after kernel.
@@ -21,22 +24,33 @@ struct run {
 struct {
   struct spinlock lock;
   struct run *freelist;
-} kmem;
+} kmem[NCPU];
 
 void
 kinit()
 {
-  initlock(&kmem.lock, "kmem");
+	for (int i=0; i<NCPU; i++){
+//		char lockName[LOCKNAMELEN];
+//		snprintf(lockName, sizeof(lockName), "kmem%d", i);
+		initlock(&kmem[i].lock, "kmem");	
+	}
+  //initlock(&kmem.lock, "kmem");
   freerange(end, (void*)PHYSTOP);
 }
 
 void
 freerange(void *pa_start, void *pa_end)
 {
-  char *p;
-  p = (char*)PGROUNDUP((uint64)pa_start);
-  for(; p + PGSIZE <= (char*)pa_end; p += PGSIZE)
-    kfree(p);
+	char *p;
+	p = (char*)PGROUNDUP((uint64)pa_start);
+	if (((uint64)pa_end - (uint64)p) % NCPU > 0){
+		interval = ((uint64)pa_end - (uint64)p) / NCPU + 1;
+	}else{
+		interval = ((uint64)pa_end - (uint64)p) / NCPU;
+	}
+
+	for(; p + PGSIZE <= (char*)pa_end; p += PGSIZE)
+		kfree(p);
 }
 
 // Free the page of physical memory pointed at by v,
@@ -56,10 +70,12 @@ kfree(void *pa)
 
   r = (struct run*)pa;
 
-  acquire(&kmem.lock);
-  r->next = kmem.freelist;
-  kmem.freelist = r;
-  release(&kmem.lock);
+  int index = ((uint64)pa - PGROUNDUP((uint64)end))/interval;
+//  printf("kfree index: %d\n", index);
+  acquire(&kmem[index].lock);
+  r->next = kmem[index].freelist;
+  kmem[index].freelist = r;
+  release(&kmem[index].lock);
 }
 
 // Allocate one 4096-byte page of physical memory.
@@ -70,13 +86,34 @@ kalloc(void)
 {
   struct run *r;
 
-  acquire(&kmem.lock);
-  r = kmem.freelist;
+  push_off();
+  int cpuID = cpuid();
+  pop_off();
+
+  acquire(&kmem[cpuID].lock);
+  r = kmem[cpuID].freelist;
   if(r)
-    kmem.freelist = r->next;
-  release(&kmem.lock);
+    kmem[cpuID].freelist = r->next;
+  release(&kmem[cpuID].lock);
+
+  if(!r){
+	for(int i = 0; i < NCPU; i++){
+		if (i == cpuID)
+			continue;	
+		else{
+			acquire(&kmem[i].lock);
+			r = kmem[i].freelist;
+			if (r)
+				kmem[i].freelist = r->next;
+			release(&kmem[i].lock);
+		}
+		if (r)
+			break;
+	} 
+  }
 
   if(r)
     memset((char*)r, 5, PGSIZE); // fill with junk
   return (void*)r;
+  printf("kalloc done!!!!!!!!!!!!!\n");
 }
