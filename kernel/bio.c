@@ -26,7 +26,7 @@
 extern uint ticks;
 #define HTSIZE 13
 struct {
-  struct spinlock lock[HTSIZE];
+  struct spinlock lock;
   struct buf buf[HTSIZE];
 
   // Linked list of all buffers, through prev/next.
@@ -37,18 +37,13 @@ struct {
   
 } bcache;
 
-void findHashTable(uint blockno){
-	uint position = blockno%HTSIZE;
-}
 
 void
 binit(void)
 {
   struct buf *b;
 
-  for (int i=0; i<HTSIZE; i++){
-	  initlock(&bcache.lock, "bcache");
-  }
+  initlock(&bcache.lock, "bcache");
 
   // Create linked list of buffers
   //bcache.head.prev = &bcache.head;
@@ -56,7 +51,7 @@ binit(void)
   for(b = bcache.buf; b < bcache.buf+HTSIZE; b++){
    // b->next = bcache.head.next;
    // b->prev = &bcache.head;
-   // initsleeplock(&b->lock, "buffer");
+   initsleeplock(&b->lock, "buffer");
    // bcache.head.next->prev = b;
    // bcache.head.next = b;
    b->lastestTime = 0;
@@ -98,32 +93,59 @@ binit(void)
 //  }
 //  panic("bget: no buffers");
 //}
-int bget(int dev, uint blockno){
-	int position = blockno % HTSIZE;
-	int oldpos = position;
 
-	// 将已经在哈希表中的buf找出, 否则找出最近最少被使用的
-	while (bcache.info[position] == 1){
-		if (bcache.buf[position].blockno == blockno){
-			return position;	
-		}else{
-			position++;	
-			if (position >= HTSIZE)
-				position -= HTSIZE;
-			if (position == oldpos){
-				uint min = UINT_MAX;
-				for (int i=position; i<position+HTSIZE-1; i++){
-					if (bcache.buf[i%HTSIZE].lastestTime < min){
-						min = bcache.info[i%HTSIZE];	
-						position = i%HTSIZE;
-					}	
-				}
-				return position;
-			}
+int findCorrespongdingIndex(const struct buf * b){
+	for (int i = 0; i < HTSIZE; i++){
+		if (&bcache.buf[i] == b){
+			return i;	
 		}	
 	}
-	return position;
+	panic("findCorrespongdingIndex: Can not find index!\n");
 }
+
+static struct buf *
+bget(uint dev, uint blockno){
+	int position = blockno % HTSIZE;
+	struct buf * b = 0;
+
+	// 遍历一圈hash table, 将已经在哈希表中的目标buf找出. 
+	// 若找不到，则退出循环。
+	// info 为0，表示该内存位置未被使用，直接返回该内存；
+	// info 为1, 表示该内存位置被使用，若blockno一致，则找到
+	// 若不一致，则查看下一个内存位置；
+	// info 为2，表示该内存位置内容被删除，若blockno一致，
+	// 则disk在内存中的唯一备份被删除, 退出循环。
+	// 若不一致，查看下一个内存位置；
+	//
+	struct buf *min = bcache.buf;
+	acquire(&bcache.lock);
+	for (int i=position; i<position+HTSIZE; i++){
+		b = &bcache.buf[i%HTSIZE];
+		if (bcache.info[i%HTSIZE] == 1){
+			if (b->dev == dev && b->blockno == blockno){
+				b->refcnt++;
+				release(&bcache.lock);
+				acquiresleep(&b->lock);
+				return b;	
+			}
+		}else{
+			if (b->lastestTime < min->lastestTime){
+				min = b;
+			}
+		}
+	}
+	int index = findCorrespongdingIndex(min);
+	bcache.info[index] = 1;
+	min->dev = dev;
+	min->blockno = blockno;
+	min->valid = 0;
+	min->refcnt = 1;
+	release(&bcache.lock);
+	acquiresleep(&min->lock);
+
+	return min;
+}
+
 
 // Return a locked buf with the contents of the indicated block.
 struct buf*
@@ -150,28 +172,46 @@ bwrite(struct buf *b)
 
 // Release a locked buffer.
 // Move to the head of the most-recently-used list.
+//void
+//brelse(struct buf *b)
+//{
+//  if(!holdingsleep(&b->lock))
+//    panic("brelse");
+//
+//  releasesleep(&b->lock);
+//
+//  acquire(&bcache.lock);
+//  b->refcnt--;
+//  if (b->refcnt == 0) {
+//    // no one is waiting for it.
+//    b->next->prev = b->prev;
+//    b->prev->next = b->next;
+//    b->next = bcache.head.next;
+//    b->prev = &bcache.head;
+//    bcache.head.next->prev = b;
+//    bcache.head.next = b;
+//  }
+//  
+//  release(&bcache.lock);
+//}
 void
-brelse(struct buf *b)
-{
-  if(!holdingsleep(&b->lock))
-    panic("brelse");
+brelse(struct buf *b){
+	if(!holdingsleep(&b->lock))
+		panic("brelse");
 
-  releasesleep(&b->lock);
+	releasesleep(&b->lock);
 
-  acquire(&bcache.lock);
-  b->refcnt--;
-  if (b->refcnt == 0) {
-    // no one is waiting for it.
-    b->next->prev = b->prev;
-    b->prev->next = b->next;
-    b->next = bcache.head.next;
-    b->prev = &bcache.head;
-    bcache.head.next->prev = b;
-    bcache.head.next = b;
-  }
-  
-  release(&bcache.lock);
+
+    acquire(&bcache.lock);
+	b->refcnt--;
+	b->lastestTime = ticks;
+	if (b->refcnt == 0) {
+		// no one is waiting for it.
+		bcache.info[findCorrespongdingIndex(b)] = 2;
+	}
+    release(&bcache.lock);
 }
+
 
 void
 bpin(struct buf *b) {
