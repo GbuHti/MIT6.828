@@ -377,8 +377,10 @@ iunlockput(struct inode *ip)
 static uint
 bmap(struct inode *ip, uint bn)
 {
-  uint addr, *a;
+  uint addr, *a, *b;
   struct buf *bp;
+  struct buf *flbp; // first level block of inode
+  struct buf *slbp; // second level block of inode
 
   if(bn < NDIRECT){
     if((addr = ip->addrs[bn]) == 0)
@@ -400,7 +402,33 @@ bmap(struct inode *ip, uint bn)
     brelse(bp);
     return addr;
   }
+  bn -= NINDIRECT;
 
+  if(bn < NDINDIRECT){
+	  // 计算出索引
+	  int flIdx = bn / NINDIRECT;
+	  int slIdx = bn % NINDIRECT;
+	  // 向下索引到second level block
+	  if((addr = ip->addrs[NDIRECT+1]) == 0)
+		  ip->addrs[NDIRECT+1] = addr = balloc(ip->dev);
+	  flbp = bread(ip->dev, addr);
+	  a = (uint*)flbp->data;
+	  if((addr = a[flIdx]) == 0){
+		a[flIdx] = addr  = balloc(ip->dev);
+		log_write(flbp);
+	  }
+	  slbp = bread(ip->dev, addr);
+	  b = (uint*)slbp->data;
+	  if((addr = b[slIdx]) == 0){
+		b[slIdx] = addr = balloc(ip->dev); 
+		log_write(slbp);
+	  }
+	  brelse(flbp);
+	  brelse(slbp);
+	  return addr;
+  }
+
+  printf("bn: %d\n", bn);
   panic("bmap: out of range");
 }
 
@@ -409,9 +437,11 @@ bmap(struct inode *ip, uint bn)
 void
 itrunc(struct inode *ip)
 {
-  int i, j;
+  int i, j, k;
   struct buf *bp;
-  uint *a;
+  struct buf *flbp;
+  struct buf *slbp;
+  uint *a, *b;
 
   for(i = 0; i < NDIRECT; i++){
     if(ip->addrs[i]){
@@ -420,6 +450,7 @@ itrunc(struct inode *ip)
     }
   }
 
+  // release singly-indirect block
   if(ip->addrs[NDIRECT]){
     bp = bread(ip->dev, ip->addrs[NDIRECT]);
     a = (uint*)bp->data;
@@ -430,6 +461,28 @@ itrunc(struct inode *ip)
     brelse(bp);
     bfree(ip->dev, ip->addrs[NDIRECT]);
     ip->addrs[NDIRECT] = 0;
+  }
+
+  // release doubly-indirect block
+  if(ip->addrs[NDIRECT+1]){
+	 flbp = bread(ip->dev, ip->addrs[NDIRECT+1]);
+	 a = (uint*)flbp->data;
+	 for (j = 0; j < NINDIRECT; j++){
+		if (a[j]){
+			slbp = bread(ip->dev, a[j]);	
+			b = (uint*)slbp->data;
+			for (k = 0; k < NINDIRECT; k++){
+				if(b[k])
+					bfree(ip->dev, b[k]);	
+			}
+			b[k] = 0;
+			brelse(slbp);
+			bfree(ip->dev, a[j]);
+		} 
+	 }
+	 brelse(flbp);
+	 bfree(ip->dev, ip->addrs[NDIRECT+1]);
+	 ip->addrs[NDIRECT+1] = 0;
   }
 
   ip->size = 0;
