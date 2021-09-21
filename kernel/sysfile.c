@@ -15,6 +15,7 @@
 #include "sleeplock.h"
 #include "file.h"
 #include "fcntl.h"
+#include "buf.h"
 
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
@@ -283,6 +284,29 @@ create(char *path, short type, short major, short minor)
   return ip;
 }
 
+int copypath(char *dst, char *src, uint max){
+	int got_null = 0;
+	int cnt = 0;
+
+	while(got_null == 0 && max > cnt){
+		if (*src == '\0'){
+			*dst = '\0';
+			got_null = 1;
+			break;	
+		}else{
+			*dst = *src;	
+		}
+		src++;
+		dst++;
+		cnt++;
+	}
+	if (got_null){
+		return 0;	
+	}else{
+		return -1;	
+	}
+}
+
 uint64
 sys_open(void)
 {
@@ -307,9 +331,26 @@ sys_open(void)
     if((ip = namei(path)) == 0){
       end_op();
       return -1;
-    }
-    ilock(ip);
-    if(ip->type == T_DIR && omode != O_RDONLY){
+	}
+	// my code
+	if (ip->type == T_SYMLINK){
+		if (omode != O_NOFOLLOW){
+			// find the linked target's inode in symbolic link's inode
+			struct buf *bp = bread(ip->dev, ip->addrs[0]);
+			if (copypath(path, (char *)bp->data, MAXPATH) < 0){
+				iunlockput(ip);
+				end_op();
+				return -1;	
+			}
+			if ((ip = namei(path)) == 0){
+				end_op();
+				return -1;	
+			}
+		}  
+	}
+	// my code stop here
+	ilock(ip);
+	if(ip->type == T_DIR && omode != O_RDONLY){
       iunlockput(ip);
       end_op();
       return -1;
@@ -321,6 +362,7 @@ sys_open(void)
     end_op();
     return -1;
   }
+
 
   if((f = filealloc()) == 0 || (fd = fdalloc(f)) < 0){
     if(f)
@@ -344,6 +386,7 @@ sys_open(void)
   if((omode & O_TRUNC) && ip->type == T_FILE){
     itrunc(ip);
   }
+
 
   iunlock(ip);
   end_op();
@@ -484,3 +527,44 @@ sys_pipe(void)
   }
   return 0;
 }
+
+uint64
+sys_symlink(void)
+{
+	// 新建一个inode——ip, 将target存入
+	// 0, 确认target的类型，T_FILE, 如果是symbolic link, 应找到
+	// 1, 找到inode的上级inode——dp, 添加目录项{name, ip->inum}
+	// 2, 新建ip, 将确认的target存入
+	char name[DIRSIZ], target[MAXPATH], path[MAXPATH];
+	struct inode *dp, *ip;
+	uint isSymbolLink = 1;
+	uint depth = 0;
+	struct inode *ip;
+
+	if(argstr(0, target, MAXPATH) < 0 || argstr(1, path, MAXPATH) < 0)
+		return -1;
+
+	begin_op();
+
+	while(isSymbolLink && depth < 10){
+		if ((ip = namei(target)) == 0){
+			end_op();
+			return -1;	
+		} 
+		if (ip->type == T_FILE){
+				
+			isSymbolLink = 0;
+		}else if (ip->type == T_SYMLINK){
+			readi(ip, 0, name, 0, DIRSIZ) ==	
+		}
+		depth++;	
+	}
+	return 0;
+}
+
+
+
+
+
+
+
