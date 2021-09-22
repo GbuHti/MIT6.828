@@ -70,14 +70,17 @@ testsymlink(void)
   r = symlink("/testsymlink/a", "/testsymlink/b");
   if(r < 0)
     fail("symlink b -> a failed");
+  printf("STEP 1 DONE\n");
 
   if(write(fd1, buf, sizeof(buf)) != 4)
     fail("failed to write to a");
+  printf("STEP 2 DONE\n");
 
   if (stat_slink("/testsymlink/b", &st) != 0)
     fail("failed to stat b");
   if(st.type != T_SYMLINK)
     fail("b isn't a symlink");
+  printf("STEP 3 DONE\n");
 
   fd2 = open("/testsymlink/b", O_RDWR);
   if(fd2 < 0)
@@ -85,10 +88,13 @@ testsymlink(void)
   read(fd2, &c, 1);
   if (c != 'a')
     fail("failed to read bytes from b");
+  printf("STEP 4 DONE\n");
 
   unlink("/testsymlink/a");
+  printf("STEP 5.1 DONE\n");
   if(open("/testsymlink/b", O_RDWR) >= 0)
     fail("Should not be able to open b after deleting a");
+  printf("STEP 5 DONE\n");
 
   r = symlink("/testsymlink/b", "/testsymlink/a");
   if(r < 0)
@@ -157,6 +163,7 @@ concur(void)
     if(pid == 0) {
       int m = 0;
       unsigned int x = (pid ? 1 : 97);
+	  printf("x: %d\n", x);
       for(i = 0; i < 100; i++){
         x = x * 1103515245 + 12345;
         if((x % 3) == 0) {
@@ -171,6 +178,7 @@ concur(void)
         } else {
           unlink("/testsymlink/y");
         }
+		printf("i: %d\n", i);
       }
       exit(0);
     }

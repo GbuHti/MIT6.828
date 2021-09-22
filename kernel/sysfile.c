@@ -334,14 +334,17 @@ sys_open(void)
 	}
 	// my code
 	if (ip->type == T_SYMLINK){
+		printf("path: %s\n", path);
 		if (omode != O_NOFOLLOW){
 			// find the linked target's inode in symbolic link's inode
 			struct buf *bp = bread(ip->dev, ip->addrs[0]);
 			if (copypath(path, (char *)bp->data, MAXPATH) < 0){
-				iunlockput(ip);
+				printf("linked path in <0 : %s\n", path);
 				end_op();
 				return -1;	
 			}
+			brelse(bp);
+			printf("linked path : %s\n", path);
 			if ((ip = namei(path)) == 0){
 				end_op();
 				return -1;	
@@ -535,11 +538,10 @@ sys_symlink(void)
 	// 0, 确认target的类型，T_FILE, 如果是symbolic link, 应找到
 	// 1, 找到inode的上级inode——dp, 添加目录项{name, ip->inum}
 	// 2, 新建ip, 将确认的target存入
-	char name[DIRSIZ], target[MAXPATH], path[MAXPATH];
-	struct inode *dp, *ip;
+	char target[MAXPATH], path[MAXPATH];
 	uint isSymbolLink = 1;
 	uint depth = 0;
-	struct inode *ip;
+	struct inode *ip, *tp;
 
 	if(argstr(0, target, MAXPATH) < 0 || argstr(1, path, MAXPATH) < 0)
 		return -1;
@@ -547,18 +549,28 @@ sys_symlink(void)
 	begin_op();
 
 	while(isSymbolLink && depth < 10){
-		if ((ip = namei(target)) == 0){
+		if ((tp = namei(target)) == 0){
 			end_op();
 			return -1;	
 		} 
-		if (ip->type == T_FILE){
-				
+		ilock(tp);
+		if (tp->type == T_FILE){
+			ip = create(path, T_SYMLINK, 0, 0);
+			if (writei(ip, 0, (uint64)target, 0, MAXPATH) != MAXPATH){
+				panic("sys_syslink: writei");
+			}			
+			iunlockput(ip);
 			isSymbolLink = 0;
-		}else if (ip->type == T_SYMLINK){
-			readi(ip, 0, name, 0, DIRSIZ) ==	
+		}else if (tp->type == T_SYMLINK){
+			if (readi(tp, 0, (uint64)target, 0, MAXPATH) == 0){
+				end_op();
+				return -1;	
+			}	
 		}
 		depth++;	
 	}
+	iunlockput(tp);
+	end_op();
 	return 0;
 }
 

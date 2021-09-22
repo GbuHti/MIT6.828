@@ -69,8 +69,8 @@ balloc(uint dev)
 
   bp = 0;
   for(b = 0; b < sb.size; b += BPB){
-	printf("sb.size: %d\t sb.nblock: %d\t sb.nlogs: %d\t sb.ninodes: %d\n",sb.size, sb.nblocks, sb.nlog, sb.ninodes);
-	printf("sb.bmapstart: %d \n", sb.bmapstart);
+//	printf("sb.size: %d\t sb.nblock: %d\t sb.nlogs: %d\t sb.ninodes: %d\n",sb.size, sb.nblocks, sb.nlog, sb.ninodes);
+//	printf("sb.bmapstart: %d \n", sb.bmapstart);
     bp = bread(dev, BBLOCK(b, sb));
     for(bi = 0; bi < BPB && b + bi < sb.size; bi++){
       m = 1 << (bi % 8);
