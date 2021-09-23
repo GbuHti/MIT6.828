@@ -253,7 +253,7 @@ create(char *path, short type, short major, short minor)
   if((ip = dirlookup(dp, name, 0)) != 0){
     iunlockput(dp);
     ilock(ip);
-    if(type == T_FILE && (ip->type == T_FILE || ip->type == T_DEVICE))
+    if((type == T_FILE && (ip->type == T_FILE || ip->type == T_DEVICE)) || (type == T_SYMLINK && ip->type == T_SYMLINK))
       return ip;
     iunlockput(ip);
     return 0;
@@ -334,18 +334,18 @@ sys_open(void)
 	}
 	// my code
 	if (ip->type == T_SYMLINK){
-		printf("path: %s\n", path);
 		if (omode != O_NOFOLLOW){
 			// find the linked target's inode in symbolic link's inode
 			struct buf *bp = bread(ip->dev, ip->addrs[0]);
 			if (copypath(path, (char *)bp->data, MAXPATH) < 0){
-				printf("linked path in <0 : %s\n", path);
+				//printf("linked path in <0 : %s\n", path);
 				end_op();
 				return -1;	
 			}
 			brelse(bp);
-			printf("linked path : %s\n", path);
-			if ((ip = namei(path)) == 0){
+			//printf("linked path : %s\n", path);
+			//策略：symbolic link 指向:1,T_FILE 2,不存在的文件的文件名
+			if ((ip = namei(path)) == 0 || ip->type == T_SYMLINK){
 				end_op();
 				return -1;	
 			}
@@ -548,28 +548,34 @@ sys_symlink(void)
 
 	begin_op();
 
+	//策略：symbolic link 指向:1,T_FILE 2,不存在的文件的文件名
 	while(isSymbolLink && depth < 10){
 		if ((tp = namei(target)) == 0){
-			end_op();
-			return -1;	
-		} 
-		ilock(tp);
-		if (tp->type == T_FILE){
 			ip = create(path, T_SYMLINK, 0, 0);
 			if (writei(ip, 0, (uint64)target, 0, MAXPATH) != MAXPATH){
 				panic("sys_syslink: writei");
 			}			
 			iunlockput(ip);
 			isSymbolLink = 0;
-		}else if (tp->type == T_SYMLINK){
-			if (readi(tp, 0, (uint64)target, 0, MAXPATH) == 0){
-				end_op();
-				return -1;	
-			}	
+		}else{
+			ilock(tp);
+			if (tp->type == T_FILE){
+				ip = create(path, T_SYMLINK, 0, 0);
+				if (writei(ip, 0, (uint64)target, 0, MAXPATH) != MAXPATH){
+					panic("sys_syslink: writei");
+				}			
+				iunlockput(ip);
+				isSymbolLink = 0;
+			}else if (tp->type == T_SYMLINK){
+				if (readi(tp, 0, (uint64)target, 0, MAXPATH) == 0){
+					end_op();
+					return -1;	
+				}	
+			}
+			depth++;	
+			iunlockput(tp);
 		}
-		depth++;	
 	}
-	iunlockput(tp);
 	end_op();
 	return 0;
 }
