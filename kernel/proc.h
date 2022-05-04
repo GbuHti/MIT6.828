@@ -80,6 +80,14 @@ struct trapframe {
   /* 280 */ uint64 t6;
 };
 
+struct VMA {
+	uint64 start;   // start address of VMA
+	int length;   // length of VMA 
+	struct file *f;
+	uint32 permission;
+	uint32 flags;
+};
+
 enum procstate { UNUSED, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
 
 // Per-process state
@@ -102,5 +110,6 @@ struct proc {
   struct context context;      // swtch() here to run process
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
+  struct VMA vmas[16];
   char name[16];               // Process name (debugging)
 };

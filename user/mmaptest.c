@@ -72,6 +72,11 @@ makefile(const char *f)
     if (write(fd, buf, BSIZE) != BSIZE)
       err("write 0 makefile");
   }
+  memset(buf, 0, BSIZE);
+  for (i = 0; i < n/2; i++) {
+    if (write(fd, buf, BSIZE) != BSIZE)
+      err("write 0 makefile");
+  }
   if (close(fd) == -1)
     err("close");
 }
@@ -113,6 +118,7 @@ mmap_test(void)
   char *p = mmap(0, PGSIZE*2, PROT_READ, MAP_PRIVATE, fd, 0);
   if (p == MAP_FAILED)
     err("mmap (1)");
+  printf("=>mmap p: %x\n", p);
   _v1(p);
   if (munmap(p, PGSIZE*2) == -1)
     err("munmap (1)");
@@ -280,14 +286,17 @@ fork_test(void)
     exit(0); // tell the parent that the mapping looks OK.
   }
 
+  printf("-->x1\n");
   int status = -1;
   wait(&status);
 
+  printf("-->x2\n");
   if(status != 0){
     printf("fork_test failed\n");
     exit(1);
   }
 
+  printf("-->x3\n");
   // check that the parent's mappings are still there.
   _v1(p1);
   _v1(p2);

@@ -5,6 +5,9 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "fs.h"
+#include "sleeplock.h"
+#include "file.h"
 
 struct spinlock tickslock;
 uint ticks;
@@ -67,9 +70,37 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
+  } else if(r_scause() == 13 || r_scause() == 15) {
+	uint64 va = r_stval();
+	struct VMA *vma = 0;
+	int ret = GetTargetVma(p->vmas, va, &vma);
+	//printf("==>ret: %d, vma: %p\n", ret, vma);
+	if (ret == 0) {
+		printf("trap stval: %x\n", va);
+		printf("vma start: %x\n", vma->start);
+		printf("vma length: %x\n", vma->length);
+		printf("vma READ: %x\n", vma->permission & PTE_R);
+		printf("vma WRITE: %x\n", vma->permission & PTE_W);
+		if ((uint64)vma != 0) {
+			//
+			struct inode *ip = vma->f->ip;
+			uint32 off = PGROUNDDOWN(va - vma->start);	
+			void *mem = kalloc();
+			ilock(ip);
+			readi(ip, 0, (uint64)mem, off, PGSIZE);
+			printf("mem: %p\n", mem);
+			printf("mem[0]: %d\n", ((char *)mem)[0]);
+			iunlock(ip);
+			mappages(p->pagetable, PGROUNDDOWN(va), PGSIZE,(uint64)mem, vma->permission|PTE_U);
+		}
+	} else {
+	  printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
+	  printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
+    p->killed = 1;
+	}
   } else {
-    printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
-    printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
+	  printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
+	  printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     p->killed = 1;
   }
 

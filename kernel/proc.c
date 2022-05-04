@@ -296,6 +296,17 @@ fork(void)
       np->ofile[i] = filedup(p->ofile[i]);
   np->cwd = idup(p->cwd);
 
+  for(i = 0; i < 16; i++) {
+	  np->vmas[i].start = p->vmas[i].start;
+	  np->vmas[i].length = p->vmas[i].length;
+	  if (p->vmas[i].f)
+		np->vmas[i].f = filedup(p->vmas[i].f);
+      np->vmas[i].permission = p->vmas[i].permission;
+      np->vmas[i].flags = p->vmas[i].flags;
+  }
+  np->cwd = idup(p->cwd);
+
+
   safestrcpy(np->name, p->name, sizeof(p->name));
 
   pid = np->pid;
@@ -700,4 +711,16 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+int GetTargetVma(struct VMA *vmas, uint64 addr, struct VMA **vma)
+{
+	for (int i = 0; i < 16; i++) {
+		if (vmas[i].start <= addr && 
+				vmas[i].start + vmas[i].length > addr) {
+			*vma = &vmas[i];
+			return 0;	
+		}
+	}
+	return -1; 
 }

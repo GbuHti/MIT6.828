@@ -485,12 +485,127 @@ sys_pipe(void)
   return 0;
 }
 
+static struct VMA *GetEmptyVma(struct VMA *vmas)
+{
+	for (int i = 0; i < 16; i++) {
+		if (vmas[i].start == 0) {
+			return &vmas[i];
+		}	
+	}
+	panic("No available empty vma!!!!\n");
+}
+
 uint64 sys_mmap(void)
 {
-	return -1;
+	uint64 addr;
+	argaddr(0, &addr);
+	int length, prot, flags, fd, offset;
+	argint(1, &length);
+	argint(2, &prot);
+	argint(3, &flags);
+	argint(4, &fd);
+	argint(5, &offset);
+
+	struct proc *p = myproc();
+	// check
+	if (prot & PROT_READ) {
+		if (p->ofile[fd]->readable == 0) {
+			printf("read prot not matched!!!\n");
+			return -1;	
+		}	
+	}
+	
+	if ((prot & PROT_WRITE) && (flags & MAP_SHARED)) {
+		if (p->ofile[fd]->writable == 0 ) {
+			printf("write prot not matched!!!\n");
+			return -1;	
+		}	
+	}
+
+	printf("p->sz: %x, addr: %x, length: %d, prot: %x\n", p->sz, addr, length, prot << 1);
+	
+	struct VMA *vma = GetEmptyVma(p->vmas);
+	if (addr != 0) {
+		vma->start = addr;
+	} else {
+		vma->start = p->sz;	
+	}
+	vma->length = length;
+	vma->f = p->ofile[fd];
+	filedup(vma->f);
+	vma->f->off = offset;
+	vma->permission = prot << 1;
+	vma->flags = flags;
+	// update proc size
+	p->sz += PGROUNDUP(length);
+
+	printf("vma->start: %x\n", vma->start);
+	return vma->start;
+}
+
+static void WriteBack(struct inode *ip, uint32 offset, uint64 va, int n)
+{
+    int max = ((MAXOPBLOCKS-1-1-2) / 2) * BSIZE;
+    int i = 0;
+	int r = 0;
+    while(i < n){
+      int n1 = n - i;
+      if(n1 > max)
+        n1 = max;
+
+      begin_op();
+      ilock(ip);
+      if ((r = writei(ip, 1, va + i, offset, n1)) > 0)
+        offset += r;
+      iunlock(ip);
+      end_op();
+
+      if(r != n1){
+        // error from writei
+        break;
+      }
+      i += r;
+}
 }
 
 uint64 sys_munmap(void)
 {
-	return -1;
+	uint64 addr;
+	int length;
+	argaddr(0, &addr);
+	addr = PGROUNDDOWN(addr);
+	argint(1, &length);
+	if (length % PGSIZE != 0) {
+		panic("munmap length not aligned!!!!\n");	
+		return -1;
+	}
+	
+	struct proc *p = myproc();	
+	struct VMA *vma = 0;
+	int ret = GetTargetVma(p->vmas, addr, &vma);
+	if (ret == -1) {
+		return -1;	
+	}
+
+	if (vma->flags & MAP_SHARED) {
+		WriteBack(vma->f->ip, addr - vma->start, addr, length);			
+	}
+	pte_t *pte = walk(p->pagetable, addr, 0);
+	if (*pte & PTE_V) {
+		uvmunmap(p->pagetable, addr, length/PGSIZE, 1);	
+	}
+	if (addr == vma->start) {
+		if (length == vma->length) {
+			vma->start = 0;
+			fileclose(vma->f);	
+		} else {
+			vma->start = addr + length;
+			vma->length = vma->length - length;
+		}
+	} else {
+		vma->length = vma->length - length;	
+	}
+	
+	
+	return 0;
 }
